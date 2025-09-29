@@ -11,7 +11,7 @@ services:
       - 7474:7474
       - 7687:7687
     environment:
-      NEO4J_AUTH: neo4j/gPlssCwiy-ucUT62D8y5LrsDmVl0wE3MgIE4v1nTdUc
+      NEO4J_AUTH: neo4j/<NEO4J_PASSWORD>
       NEO4JLABS_PLUGINS: '["apoc"]'
       NEO4J_dbms_security_procedures_unrestricted: 'apoc.*,apoc.meta.*'
       NEO4J_dbms_security_procedures_allowlist: 'apoc.*,apoc.meta.*'

@@ -11,25 +11,23 @@ NEO4J_PASSWORD=""
 
 def setup_qdrant_collection():
     """Setup Qdrant collection with correct dimensions for Gemini embedding"""
-    # Connect to your Docker Qdrant instance
+    
     client = QdrantClient(host="localhost", port=6333)
-    collection_name = "mem0"  # Default collection name used by mem0
-    
-    try:
-        # Try to delete existing collection if it exists
-        client.delete_collection(collection_name=collection_name)
-        print(f"Deleted existing collection: {collection_name}")
-    except Exception as e:
-        print(f"Collection might not exist or already deleted: {e}")
-    
-    # Create new collection with 768 dimensions for Gemini text-embedding-004
+    collection_name = "mem0"
+
+    # Check if collection already exists
+    collections = [c.name for c in client.get_collections().collections]
+    if collection_name in collections:
+        print(f"Collection '{collection_name}' already exists, skipping creation.")
+        return
+
+    # Create new collection if it does not exist
     client.create_collection(
         collection_name=collection_name,
         vectors_config=VectorParams(size=768, distance=Distance.COSINE)
     )
     print(f"Created new collection '{collection_name}' with 768 dimensions")
 
-# Setup collection before initializing mem0 - this connects to your Docker container
 setup_qdrant_collection()
 
 config = {
@@ -38,7 +36,7 @@ config = {
         "provider": "gemini",
         "config": {"api_key": GOOGLE_API_KEY, "model": "models/text-embedding-004"}
     },
-    "llm": {"provider": "gemini", "config": {"api_key": GOOGLE_API_KEY, "model": "gemini-2.0-flash-001"}},
+    "llm": {"provider": "gemini", "config": {"api_key": GOOGLE_API_KEY, "model": "gemini-2.0-flash-exp"}},
     "vector_store": {
         "provider": "qdrant",
         "config": {
@@ -60,24 +58,50 @@ openai_client = OpenAI(
 
 def chat(message):
     mem_result = mem_client.search(query=message, user_id="a123")
-    print("memory ", mem_result)
     
+    # Extract vector memories
+    memories = "\n".join([m["memory"] for m in mem_result.get("results", [])])
+
+    # Extract relations (from Neo4j graph)
+    relations = "\n".join([
+        f"{r['source']} -[{r['relationship']}]-> {r['destination']}"
+        for r in mem_result.get("relations", [])
+    ])
+
+    print("memory ", memories)
+    print("relations ", relations)
+
+    SYSTEM_PROMPT = f"""
+    You are a Memory-Aware Fact Extraction Agent.
+    Use both vector memories and graph relations to answer.
+    
+    Vector Memories:
+    {memories}
+
+    Graph Relations:
+    {relations}
+
+    Answer the user clearly, using these memories if relevant.
+    If a name or full name exists in relations, you should state it.
+    """
+
     messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": message}
     ]
-    
+
     result = openai_client.chat.completions.create(
-        model="gemini-2.0-flash-exp",  # Fixed model name
+        model="gemini-2.0-flash-exp",
         messages=messages
     )
-    
-    messages.append(
-        {"role": "assistant", "content": result.choices[0].message.content}
-    )
-    
-    mem_client.add(messages, user_id="a123")
-    
-    return result.choices[0].message.content
+
+    assistant_reply = result.choices[0].message.content
+
+    # Store just the clean assistant reply in memory (not full chat history)
+    mem_client.add({"role": "assistant", "content": assistant_reply}, user_id="a123")
+
+    return assistant_reply
+
 
 while True:
     message = input(">> ")
